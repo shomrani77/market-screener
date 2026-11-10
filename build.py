@@ -30,22 +30,22 @@ def clean(rows):
             for k, v in r.items() if isinstance(v, ok)} for r in rows]
     return res[:TOP]
 
-   def us():
-       try:
-           res = screen("global_value", use_llm=False, market="us", max_output=15)
-       except TypeError:
-           res = screen("global_value", use_llm=False, market="us")
-       out = []
-       for r in to_rows(res):
-           mv = r.get("total_mv")
-           out.append({
-               "الرمز": r.get("code"), "الاسم": r.get("name"),
-               "القطاع": r.get("industry"), "السعر": r.get("price"),
-               "التغير %": r.get("change_pct"),
-               "PE": r.get("pe_ratio"), "PB": r.get("pb_ratio"),
-               "القيمة السوقية (مليار $)": round(mv / 1e9, 1) if isinstance(mv, (int, float)) else None,
-           })
-       return clean(out)
+def us():
+    try:
+        res = screen("global_value", use_llm=False, market="us", max_output=15)
+    except TypeError:
+        res = screen("global_value", use_llm=False, market="us")
+    out = []
+    for r in to_rows(res):
+        mv = r.get("total_mv")
+        out.append({
+            "الرمز": r.get("code"), "الاسم": r.get("name"),
+            "القطاع": r.get("industry"), "السعر": r.get("price"),
+            "التغير %": r.get("change_pct"),
+            "PE": r.get("pe_ratio"), "PB": r.get("pb_ratio"),
+            "القيمة السوقية (مليار $)": round(mv / 1e9, 1) if isinstance(mv, (int, float)) else None,
+        })
+    return clean(out)
 
 def saudi():
     rows = []
