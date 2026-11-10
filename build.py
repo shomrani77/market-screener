@@ -54,15 +54,23 @@ def saudi():
             i = yf.Ticker(t).info
             pe, pb = i.get("trailingPE"), i.get("priceToBook")
             if pe and pb and 0 < pe < 25 and 0 < pb < 4:
+                price = i.get("currentPrice") or i.get("regularMarketPrice")
+                dr = i.get("dividendRate")
+                dy = round(dr / price * 100, 2) if dr and price else "—"
                 rows.append({"الرمز": t, "الاسم": i.get("shortName", ""),
                              "القطاع": i.get("sector", ""),
-                             "PE": round(pe, 2), "PB": round(pb, 2)})
+                             "السعر": round(price, 2) if price else "—",
+                             "PE": round(pe, 2), "PB": round(pb, 2),
+                             "التوزيعات %": dy})
         except Exception:
             continue
     pe_r = {r["الرمز"]: n for n, r in enumerate(sorted(rows, key=lambda x: x["PE"]))}
     pb_r = {r["الرمز"]: n for n, r in enumerate(sorted(rows, key=lambda x: x["PB"]))}
     rows.sort(key=lambda r: pe_r[r["الرمز"]] + pb_r[r["الرمز"]])
-    return rows[:TOP]
+    top = rows[:TOP]
+    for r in top:
+        r["الرمز"] = r["الرمز"].replace(".SR", "")
+    return top
 
 dj = pathlib.Path("data.json")
 old = json.loads(dj.read_text()) if dj.exists() else {}
@@ -93,29 +101,40 @@ button{padding:10px 18px;border:0;border-radius:8px;background:var(--card);color
 button.on{background:var(--ac);color:#fff}
 .w{overflow-x:auto}table{border-collapse:collapse;width:100%;margin-top:10px}
 td,th{padding:8px;border-bottom:1px solid var(--card);white-space:nowrap;text-align:right}
+th{cursor:pointer}
 .s{color:#dc2626;font-weight:bold}.n{font-size:13px;opacity:.75;line-height:1.7}
 </style></head><body>
 <h2>نتائج فلترة الأسهم (قيمة: PE وPB منخفضان)</h2>
 <div><button id="sa" class="on">🇸🇦 السعودي</button> <button id="us">🇺🇸 الأمريكي</button></div>
 <p id="meta" class="n"></p><div class="w"><table id="t"></table></div>
-<p class="n">PE = مضاعف الربحية، PB = مضاعف القيمة الدفترية؛ الأقل أرخص نسبياً وليس بالضرورة أفضل.
+<p class="n">اضغط على عنوان أي عمود لترتيب الجدول.<br>
+PE = مضاعف الربحية، PB = مضاعف القيمة الدفترية؛ الأقل أرخص نسبياً وليس بالضرورة أفضل.
+التوزيعات % = التوزيع السنوي مقسوماً على السعر.
 هذه نتيجة فلترة آلية للبحث والتعلم، وليست توصية شراء أو بيع. البيانات من Yahoo Finance وقد تتأخر أو تنقص.</p>
 <script>
-const D=__DATA__;let cur="sa";
+const D=__DATA__;let cur="sa",sk=null,sd=1;
 function show(){
- const s=D[cur]||{rows:[]},rows=s.rows,u=D["updated_"+cur]||"غير معروف";
+ const s=D[cur]||{rows:[]},u=D["updated_"+cur]||"غير معروف";
  const age=u==="غير معروف"?99:(Date.now()-new Date(u.replace(" UTC","").replace(" ","T")+"Z"))/864e5;
  let m="آخر تحديث ناجح: "+u;
  if(s.stale||age>4)m+=' <span class="s">⚠ البيانات قديمة، لا تعتمد عليها</span>';
  document.getElementById("meta").innerHTML=m;
  const t=document.getElementById("t");
+ const rows=(s.rows||[]).slice();
  if(!rows.length){t.innerHTML="<tr><td>لا توجد بيانات</td></tr>";return}
- const k=Object.keys(rows[0]);
- t.innerHTML="<tr>"+k.map(x=>"<th>"+x+"</th>").join("")+"</tr>"+
+ if(sk!==null){rows.sort((a,b)=>{const x=a[sk],y=b[sk];
+  if(typeof x==="number"&&typeof y==="number")return (x-y)*sd;
+  if(typeof x==="number")return -1;
+  if(typeof y==="number")return 1;
+  return String(x??"").localeCompare(String(y??""))*sd;});}
+ const k=Object.keys(s.rows[0]);
+ t.innerHTML="<tr>"+k.map(x=>"<th data-k='"+x+"'>"+x+(sk===x?(sd>0?" ▲":" ▼"):"")+"</th>").join("")+"</tr>"+
   rows.map(r=>"<tr>"+k.map(x=>"<td>"+(r[x]??"")+"</td>").join("")+"</tr>").join("");
+ t.querySelectorAll("th").forEach(h=>h.onclick=()=>{
+  const key=h.dataset.k;if(sk===key)sd=-sd;else{sk=key;sd=1}show()});
 }
 for(const id of["sa","us"])document.getElementById(id).onclick=()=>{
- cur=id;document.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.id==id));show()};
+ cur=id;sk=null;sd=1;document.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.id==id));show()};
 show();
 </script></body></html>"""
 blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
