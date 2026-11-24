@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 import time
@@ -5,8 +6,12 @@ import urllib.error
 import urllib.request
 from streamlit_app import DEFAULT_TASI_TICKERS, run_market_scan
 
-# علامة ضبط الاتجاه من اليمين لليسار لمنع تداخل الأرقام والرموز
 RTL = "\u200f"
+TIMEFRAMES = [
+    ("15m", "ربع ساعة"),
+    ("1h", "ساعة"),
+    ("1d", "يومي"),
+]
 
 
 def _api_request(
@@ -75,17 +80,82 @@ def send_telegram_message(token: str, chat_id: int, text: str) -> None:
   print("Telegram message delivered successfully.")
 
 
-def _format_row_card(idx: int, row) -> str:
-  ticker = str(row.get("الرمز", "")).strip()
-  company = str(row.get("الشركة", "")).strip()
-  tier = str(row.get("التصنيف", "")).strip()
-  entry = str(row.get("الدخول", "")).strip()
-  stop = str(row.get("الوقف", "")).strip()
-  target_2r = str(row.get("هدف 2R", "")).strip()
+def _scan_timeframe(tf_code: str):
+  sig = inspect.signature(run_market_scan)
+  params = sig.parameters
+
+  for name in ("interval", "timeframe", "tf", "period_interval"):
+    if name in params:
+      return run_market_scan(DEFAULT_TASI_TICKERS, **{name: tf_code})
+
+  # إذا لم تكن الدالة تقبل معامل فريم بعد، نعيد الفحص الافتراضي فقط للفريم اليومي
+  return run_market_scan(DEFAULT_TASI_TICKERS) if tf_code == "1d" else None
+
+
+def _collect_multi_tf_signals() -> list[dict]:
+  merged: dict[str, dict] = {}
+
+  for tf_code, tf_label in TIMEFRAMES:
+    df = _scan_timeframe(tf_code)
+    if df is None or df.empty:
+      continue
+
+    for _, row in df.iterrows():
+      ticker = str(row.get("الرمز", "")).strip()
+      if not ticker:
+        continue
+
+      company = str(row.get("الشركة", "")).strip()
+      tier = str(row.get("التصنيف", "")).strip()
+      entry = str(row.get("الدخول", "")).strip()
+      stop = str(row.get("الوقف", "")).strip()
+      target_2r = str(row.get("هدف 2R", "")).strip()
+
+      if ticker not in merged:
+        merged[ticker] = {
+            "ticker": ticker,
+            "company": company,
+            "tier": tier,
+            "entry": entry,
+            "stop": stop,
+            "target_2r": target_2r,
+            "timeframes": [],
+        }
+
+      if tf_label not in merged[ticker]["timeframes"]:
+        merged[ticker]["timeframes"].append(tf_label)
+
+      # نفضّل تحديث الأسعار بأحدث فريم متوفر إذا كانت فارغة
+      if entry and not merged[ticker]["entry"]:
+        merged[ticker]["entry"] = entry
+      if stop and not merged[ticker]["stop"]:
+        merged[ticker]["stop"] = stop
+      if target_2r and not merged[ticker]["target_2r"]:
+        merged[ticker]["target_2r"] = target_2r
+      if tier:
+        merged[ticker]["tier"] = tier
+
+  # ترتيب الأسهم: الأكثر توافقاً على الفريمات الثلاثة أولاً
+  return sorted(
+      merged.values(),
+      key=lambda item: len(item["timeframes"]),
+      reverse=True,
+  )
+
+
+def _format_multi_tf_card(idx: int, item: dict) -> str:
+  ticker = item["ticker"]
+  company = item["company"]
+  tier = item["tier"]
+  entry = item["entry"]
+  stop = item["stop"]
+  target_2r = item["target_2r"]
+  tfs_text = " | ".join(item["timeframes"]) if item["timeframes"] else "يومي"
   tv_url = f"https://www.tradingview.com/symbols/TADAWUL-{ticker}/"
 
   card_lines = [
       f"{RTL}{idx}) {company} - {ticker} [{tier}]",
+      f"{RTL}• ⏱️ الفريمات: {tfs_text}",
       f"{RTL}• 💵 إغلاق أمس: تحقق من TV",
       f"{RTL}• 📊 EMA200 = تحقق من TV",
       f"{RTL}• 📊 RSI = تحقق من TV",
@@ -98,20 +168,20 @@ def _format_row_card(idx: int, row) -> str:
 
 
 def build_alert_message() -> str:
-  df = run_market_scan(DEFAULT_TASI_TICKERS)
-  if df.empty:
+  signals = _collect_multi_tf_signals()
+  if not signals:
     return (
         f"{RTL}📊 فاحص السوق السعودي (تاسي)\n"
-        f"{RTL}• 💥 لا توجد إشارات مطابقة حالياً\n"
+        f"{RTL}• 💥 لا توجد إشارات مطابقة حالياً (ربع ساعة / ساعة / يومي)\n"
         f"{RTL}• 💡 مزاد 9:30-9:55 الرياض"
     )
 
   parts = [
-      f"{RTL}🔥 إشارات فاحص السوق السعودي (تاسي)",
+      f"{RTL}🔥 إشارات فاحص السوق السعودي (15m | 1h | 1d)",
       "────────────────────",
   ]
-  for i, (_, row) in enumerate(df.head(8).iterrows(), start=1):
-    parts.append(_format_row_card(i, row))
+  for i, item in enumerate(signals[:6], start=1):
+    parts.append(_format_multi_tf_card(i, item))
     parts.append("────────────────────")
 
   parts.append(f"{RTL}💡 مزاد 9:30-9:55 الرياض")
