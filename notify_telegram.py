@@ -1,4 +1,4 @@
-
+import json
 import os
 import urllib.error
 import urllib.request
@@ -20,41 +20,26 @@ def _api_request(token: str, method: str, payload: dict | None = None) -> dict:
       return json.loads(raw)
   except urllib.error.HTTPError as e:
     body = e.read().decode("utf-8", errors="replace")
-    raise RuntimeError(
-        f"Telegram HTTP {e.code} on {method}: {body}"
-        " | تحقق من صحة TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID ومن الضغط على"
-        " Start في محادثة البوت."
-    ) from e
+    raise RuntimeError(f"Telegram HTTP {e.code} on {method}: {body}") from e
 
 
 def verify_credentials(token: str, chat_id_raw: str) -> int:
   if not token or ":" not in token:
-    raise ValueError(
-        "صيغة TELEGRAM_BOT_TOKEN غير صحيحة. يجب إدخال التوكن كاملاً كما يظهر"
-        " في @BotFather."
-    )
+    raise ValueError("Invalid TELEGRAM_BOT_TOKEN format.")
 
   chat_id_str = chat_id_raw.strip()
   try:
     chat_id = int(chat_id_str)
   except ValueError as e:
     raise ValueError(
-        f"قيمة TELEGRAM_CHAT_ID ('{chat_id_str}') ليست رقماً صحيحاً. استخدم رقم"
-        " Id من @userinfobot (أو رقم المجموعة/القناة)."
+        f"Invalid TELEGRAM_CHAT_ID ('{chat_id_str}'); must be an integer."
     ) from e
 
   me = _api_request(token, "getMe")
   bot_info = me.get("result", {})
-  bot_username = bot_info.get("username", "unknown")
-  bot_id = bot_info.get("id")
-  print(f"Verified bot: @{bot_username} (id={bot_id}) | target chat_id={chat_id}")
-
-  if bot_id is not None and chat_id == int(bot_id):
-    raise ValueError(
-        "خطأ في الإعداد: TELEGRAM_CHAT_ID يطابق معرف البوت نفسه بدلاً من معرف"
-        " حسابك أو المحادثة المستهدفة."
-    )
-
+  print(
+      f"Verified bot: @{bot_info.get('username', 'unknown')} | chat_id={chat_id}"
+  )
   return chat_id
 
 
@@ -95,5 +80,3 @@ def main() -> None:
 
 if __name__ == "__main__":
   main()
-main()
-
