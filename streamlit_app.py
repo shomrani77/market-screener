@@ -1,79 +1,51 @@
-from datetime import datetime
-import numpy as np
-import pandas as pd
-import streamlit as st
-import yfinance as yf
+@st.cache_data(ttl=1800, show_spinner=False)
+def run_market_scan(tickers_dict: dict, interval: str = "1d") -> pd.DataFrame:
+  period_map = {
+      "15m": "60d",
+      "1h": "6mo",
+      "1d": "18mo",
+  }
+  period = period_map.get(interval, "18mo")
+  symbols = list(tickers_dict.keys())
+  raw = yf.download(
+      tickers=symbols,
+      period=period,
+      interval=interval,
+      group_by="ticker",
+      auto_adjust=False,
+      threads=True,
+      progress=False,
+  )
 
-st.set_page_config(
-    page_title="فاحص السوق السعودي | TASI EMA200 Scanner",
-    page_icon="📈",
-    layout="wide",
-)
+  if raw is None or raw.empty:
+    return pd.DataFrame()
 
-# تنسيق واجهة عربية RTL واضحة
-st.markdown(
-    """
-    <style>
-    .stApp { direction: rtl; text-align: right; }
-    div[data-testid="stMetricValue"] { direction: ltr; text-align: right; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+  results = []
+  for sym, name in tickers_dict.items():
+    try:
+      if isinstance(raw.columns, pd.MultiIndex):
+        if sym not in raw.columns.get_level_values(0):
+          continue
+        sub_df = raw[sym]
+      else:
+        sub_df = raw
+      row = evaluate_ticker(sym, name, sub_df)
+      if row:
+        results.append(row)
+    except Exception:
+      continue
 
-# قائمة أسهم سعودية سائلة ومتنوعة على Yahoo Finance (.SR)
-DEFAULT_TASI_TICKERS = {
-    "2222.SR": "أرامكو السعودية",
-    "1120.SR": "مصرف الراجحي",
-    "1180.SR": "الأهلي السعودي",
-    "1150.SR": "مصرف الإنماء",
-    "1140.SR": "بنك البلاد",
-    "1010.SR": "بنك الرياض",
-    "1060.SR": "الأول",
-    "2010.SR": "سابك",
-    "2020.SR": "سابك للمغذيات",
-    "1211.SR": "معادن",
-    "7010.SR": "اس تي سي",
-    "7020.SR": "موبايلي",
-    "7030.SR": "زين السعودية",
-    "7203.SR": "علم",
-    "7202.SR": "سلوشنز",
-    "2082.SR": "أكوا باور",
-    "5110.SR": "كهرباء السعودية",
-    "4200.SR": "الدريس",
-    "4003.SR": "إكسترا",
-    "4190.SR": "جرير",
-    "4001.SR": "أسواق العثيم",
-    "2280.SR": "المراعي",
-    "2050.SR": "صافولا",
-    "4013.SR": "سليمان الحبيب",
-    "4002.SR": "المواساة",
-    "4004.SR": "دله الصحية",
-    "4007.SR": "الحمادي",
-    "4300.SR": "دار الأركان",
-    "4250.SR": "جبل عمر",
-    "4321.SR": "سينومي سنترز",
-    "4030.SR": "البحري",
-    "4031.SR": "الخدمات الأرضية",
-    "4260.SR": "بدجت السعودية",
-    "1830.SR": "لجام للرياضة",
-    "6015.SR": "أمريكانا",
-    "2380.SR": "بترو رابغ",
-    "2350.SR": "كيان السعودية",
-    "2310.SR": "سبكيم العالمية",
-    "2290.SR": "ينساب",
-    "3030.SR": "أسمنت السعودية",
-}
+  if not results:
+    return pd.DataFrame()
 
+  df_res = pd.DataFrame(results)
+  rank_map = {"A+": 0, "A": 1, "WATCH": 2}
+  df_res["_rank"] = df_res["التصنيف"].map(rank_map)
+  df_res = df_res.sort_values(by=["_rank", "ADX"], ascending=[True, False]).drop(
+      columns=["_rank"]
+  )
+  return df_res.reset_index(drop=True)
 
-def compute_rsi_wilder(close: pd.Series, period: int = 21) -> pd.Series:
-  delta = close.diff()
-  gain = delta.clip(lower=0)
-  loss = -delta.clip(upper=0)
-  avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-  avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-  rs = avg_gain / avg_loss.replace(0, np.nan)
-  return 100 - (100 / (1 + rs))
 
 
 def compute_dmi_adx(df: pd.DataFrame, period: int = 14):
