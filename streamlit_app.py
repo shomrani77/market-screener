@@ -1,51 +1,79 @@
-@st.cache_data(ttl=1800, show_spinner=False)
-def run_market_scan(tickers_dict: dict, interval: str = "1d") -> pd.DataFrame:
-  period_map = {
-      "15m": "60d",
-      "1h": "6mo",
-      "1d": "18mo",
-  }
-  period = period_map.get(interval, "18mo")
-  symbols = list(tickers_dict.keys())
-  raw = yf.download(
-      tickers=symbols,
-      period=period,
-      interval=interval,
-      group_by="ticker",
-      auto_adjust=False,
-      threads=True,
-      progress=False,
-  )
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import streamlit as st
+import yfinance as yf
 
-  if raw is None or raw.empty:
-    return pd.DataFrame()
+st.set_page_config(
+    page_title="فاحص السوق السعودي | TASI EMA200 Scanner",
+    page_icon="📈",
+    layout="wide",
+)
 
-  results = []
-  for sym, name in tickers_dict.items():
-    try:
-      if isinstance(raw.columns, pd.MultiIndex):
-        if sym not in raw.columns.get_level_values(0):
-          continue
-        sub_df = raw[sym]
-      else:
-        sub_df = raw
-      row = evaluate_ticker(sym, name, sub_df)
-      if row:
-        results.append(row)
-    except Exception:
-      continue
+# تنسيق واجهة عربية RTL واضحة
+st.markdown(
+    """
+    <style>
+    .stApp { direction: rtl; text-align: right; }
+    div[data-testid="stMetricValue"] { direction: ltr; text-align: right; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-  if not results:
-    return pd.DataFrame()
+# قائمة أسهم سعودية سائلة ومتنوعة على Yahoo Finance (.SR)
+DEFAULT_TASI_TICKERS = {
+    "2222.SR": "أرامكو السعودية",
+    "1120.SR": "مصرف الراجحي",
+    "1180.SR": "الأهلي السعودي",
+    "1150.SR": "مصرف الإنماء",
+    "1140.SR": "بنك البلاد",
+    "1010.SR": "بنك الرياض",
+    "1060.SR": "الأول",
+    "2010.SR": "سابك",
+    "2020.SR": "سابك للمغذيات",
+    "1211.SR": "معادن",
+    "7010.SR": "اس تي سي",
+    "7020.SR": "موبايلي",
+    "7030.SR": "زين السعودية",
+    "7203.SR": "علم",
+    "7202.SR": "سلوشنز",
+    "2082.SR": "أكوا باور",
+    "5110.SR": "كهرباء السعودية",
+    "4200.SR": "الدريس",
+    "4003.SR": "إكسترا",
+    "4190.SR": "جرير",
+    "4001.SR": "أسواق العثيم",
+    "2280.SR": "المراعي",
+    "2050.SR": "صافولا",
+    "4013.SR": "سليمان الحبيب",
+    "4002.SR": "المواساة",
+    "4004.SR": "دله الصحية",
+    "4007.SR": "الحمادي",
+    "4300.SR": "دار الأركان",
+    "4250.SR": "جبل عمر",
+    "4321.SR": "سينومي سنترز",
+    "4030.SR": "البحري",
+    "4031.SR": "الخدمات الأرضية",
+    "4260.SR": "بدجت السعودية",
+    "1830.SR": "لجام للرياضة",
+    "6015.SR": "أمريكانا",
+    "2380.SR": "بترو رابغ",
+    "2350.SR": "كيان السعودية",
+    "2310.SR": "سبكيم العالمية",
+    "2290.SR": "ينساب",
+    "3030.SR": "أسمنت السعودية",
+}
 
-  df_res = pd.DataFrame(results)
-  rank_map = {"A+": 0, "A": 1, "WATCH": 2}
-  df_res["_rank"] = df_res["التصنيف"].map(rank_map)
-  df_res = df_res.sort_values(by=["_rank", "ADX"], ascending=[True, False]).drop(
-      columns=["_rank"]
-  )
-  return df_res.reset_index(drop=True)
 
+def compute_rsi_wilder(close: pd.Series, period: int = 21) -> pd.Series:
+  delta = close.diff()
+  gain = delta.clip(lower=0)
+  loss = -delta.clip(upper=0)
+  avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+  avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+  rs = avg_gain / avg_loss.replace(0, np.nan)
+  return 100 - (100 / (1 + rs))
 
 
 def compute_dmi_adx(df: pd.DataFrame, period: int = 14):
@@ -193,18 +221,26 @@ def evaluate_ticker(symbol: str, name: str, df: pd.DataFrame) -> dict | None:
   }
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def run_market_scan(tickers_dict: dict) -> pd.DataFrame:
+def _scan_market_uncached(tickers_dict: dict, interval: str = "1d") -> pd.DataFrame:
+  period_map = {
+      "15m": "60d",
+      "1h": "6mo",
+      "1d": "18mo",
+  }
+  period = period_map.get(interval, "18mo")
   symbols = list(tickers_dict.keys())
   raw = yf.download(
       tickers=symbols,
-      period="18mo",
-      interval="1d",
+      period=period,
+      interval=interval,
       group_by="ticker",
       auto_adjust=False,
       threads=True,
       progress=False,
   )
+
+  if raw is None or raw.empty:
+    return pd.DataFrame()
 
   results = []
   for sym, name in tickers_dict.items():
@@ -233,17 +269,36 @@ def run_market_scan(tickers_dict: dict) -> pd.DataFrame:
   return df_res.reset_index(drop=True)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _scan_market_cached(tickers_items: tuple, interval: str = "1d") -> pd.DataFrame:
+  return _scan_market_uncached(dict(tickers_items), interval=interval)
+
+
+def run_market_scan(tickers_dict: dict, interval: str = "1d") -> pd.DataFrame:
+  try:
+    return _scan_market_cached(tuple(sorted(tickers_dict.items())), interval=interval)
+  except Exception:
+    return _scan_market_uncached(tickers_dict, interval=interval)
+
+
 # --- واجهة المستخدم ---
 st.title("📈 فاحص السوق السعودي (TASI EMA200 Scanner)")
 st.caption(
-    "فحص يومي للأسهم السعودية السائلة وفق نموذج EMA200 High مع تأكيد الزخم"
+    "فحص الأسهم السعودية السائلة وفق نموذج EMA200 High مع تأكيد الزخم"
     " (MACD 34/144/25 و RSI 21) وقوة الاتجاه (DMI/ADX) والبولنجر."
 )
 
-col_btn, col_filter, col_time = st.columns([1.2, 2, 2])
+col_btn, col_tf, col_filter, col_time = st.columns([1.2, 1.3, 2, 1.5])
 with col_btn:
   if st.button("🔄 تحديث وفحص الآن", use_container_width=True, type="primary"):
     st.cache_data.clear()
+
+with col_tf:
+  selected_tf = st.selectbox(
+      "الفريم الزمني",
+      options=["1d", "1h", "15m"],
+      index=0,
+  )
 
 with col_filter:
   selected_tiers = st.multiselect(
@@ -271,7 +326,7 @@ if extra_input.strip():
         tickers_to_scan[sym_key] = f"سهم {clean}"
 
 with st.spinner("جاري سحب البيانات وفحص الأسهم السعودية..."):
-  scan_df = run_market_scan(tickers_to_scan)
+  scan_df = run_market_scan(tickers_to_scan, interval=selected_tf)
 
 if scan_df.empty:
   st.warning("لا توجد أسهم مطابقة للشروط حالياً أو تعذر جلب البيانات مؤقتاً.")
@@ -294,7 +349,7 @@ else:
   st.download_button(
       label="📥 تنزيل المرشحين بصيغة CSV",
       data=csv_bytes,
-      file_name=f"tasi_scanner_{datetime.now().strftime('%Y%m%d')}.csv",
+      file_name=f"tasi_scanner_{selected_tf}_{datetime.now().strftime('%Y%m%d')}.csv",
       mime="text/csv",
   )
 
